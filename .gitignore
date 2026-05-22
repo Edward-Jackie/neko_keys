@@ -1,0 +1,12 @@
+# Backend
+neko_backend/neko_backend
+
+# Frontend
+neko_frontend/node_modules/
+neko_frontend/dist/
+
+# Env
+.env
+
+# OS
+.DS_Store

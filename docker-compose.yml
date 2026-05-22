@@ -1,0 +1,48 @@
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: neko_mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-neko123}
+      MYSQL_DATABASE: neko_keys
+      MYSQL_CHARSET: utf8mb4
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  neko_backend:
+    build: ./neko_backend
+    container_name: neko_backend
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      DB_HOST: mysql
+      DB_PORT: 3306
+      DB_USER: root
+      DB_PASSWORD: ${MYSQL_ROOT_PASSWORD:-neko123}
+      DB_NAME: neko_keys
+      JWT_SECRET: ${JWT_SECRET:-neko-jwt-secret-change-me}
+      PORT: 9002
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin123}
+    ports:
+      - "9002:9002"
+
+  neko_frontend:
+    build: ./neko_frontend
+    container_name: neko_frontend
+    restart: unless-stopped
+    depends_on:
+      - neko_backend
+    ports:
+      - "80:80"
+
+volumes:
+  mysql_data:
