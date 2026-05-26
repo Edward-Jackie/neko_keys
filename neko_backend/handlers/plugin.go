@@ -22,6 +22,12 @@ func NewPluginHandler(kc *cache.KeyCache) *PluginHandler {
 	return &PluginHandler{cache: kc}
 }
 
+// pluginReq is the JSON body shared by the activate and validate endpoints.
+type pluginReq struct {
+	ShopName string `json:"shop_name"`
+	ShopID   string `json:"shop_id"`
+}
+
 // extractBearerKey parses the Authorization header and returns the key string.
 // It expects "Bearer nk_XXXX".
 func extractBearerKey(c *gin.Context) (string, bool) {
@@ -96,6 +102,14 @@ func (h *PluginHandler) Activate(c *gin.Context) {
 
 	ip := getClientIP(c)
 
+	var req pluginReq
+	_ = c.ShouldBindJSON(&req)
+	shopName := strings.TrimSpace(req.ShopName)
+	if shopName == "" {
+		c.JSON(http.StatusOK, gin.H{"success": false, "error": "缺少店铺名称"})
+		return
+	}
+
 	k, err := h.lookupKey(keyStr)
 	if err != nil {
 		writeKeyLog(0, ip, "activate", false)
@@ -125,6 +139,13 @@ func (h *PluginHandler) Activate(c *gin.Context) {
 		return
 	}
 
+	// One key = one shop: reject activation from a shop other than the bound one.
+	if k.BoundShop != "" && k.BoundShop != shopName {
+		writeKeyLog(k.ID, ip, "activate", false)
+		c.JSON(http.StatusOK, gin.H{"success": false, "error": "密钥已绑定其他店铺"})
+		return
+	}
+
 	// Build the update map.
 	updates := map[string]interface{}{
 		"use_count": k.UseCount + 1,
@@ -134,6 +155,10 @@ func (h *PluginHandler) Activate(c *gin.Context) {
 		now := time.Now()
 		updates["activated_at"] = now
 		updates["activated_ip"] = ip
+	}
+	// Bind the shop on first activation.
+	if k.BoundShop == "" {
+		updates["bound_shop"] = shopName
 	}
 
 	// Check if this increment will exhaust the key, and mark accordingly.
@@ -167,6 +192,7 @@ func (h *PluginHandler) Activate(c *gin.Context) {
 		"success":    true,
 		"key_id":     k.ID,
 		"expires_at": k.ExpiresAt.UTC().Format(time.RFC3339),
+		"bound_shop": shopName,
 	})
 }
 
@@ -182,6 +208,14 @@ func (h *PluginHandler) Validate(c *gin.Context) {
 	}
 
 	ip := getClientIP(c)
+
+	var req pluginReq
+	_ = c.ShouldBindJSON(&req)
+	shopName := strings.TrimSpace(req.ShopName)
+	if shopName == "" {
+		c.JSON(http.StatusOK, gin.H{"success": false, "error": "缺少店铺名称"})
+		return
+	}
 
 	k, err := h.lookupKey(keyStr)
 	if err != nil {
@@ -200,9 +234,12 @@ func (h *PluginHandler) Validate(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"success": false, "error": "密钥已过期"})
 		return
 	}
-	if k.IsUsageLimitReached() {
+	// Ongoing validation intentionally ignores the usage limit: an activated
+	// one_time key has use_count>=1 but must keep validating for its bound shop
+	// until the calendar expiry. It enforces the one-key-one-shop binding instead.
+	if k.BoundShop == "" || k.BoundShop != shopName {
 		writeKeyLog(k.ID, ip, "validate", false)
-		c.JSON(http.StatusOK, gin.H{"success": false, "error": "密钥已达使用上限"})
+		c.JSON(http.StatusOK, gin.H{"success": false, "error": "shop_mismatch"})
 		return
 	}
 
@@ -212,5 +249,6 @@ func (h *PluginHandler) Validate(c *gin.Context) {
 		"success":    true,
 		"key_id":     k.ID,
 		"expires_at": k.ExpiresAt.UTC().Format(time.RFC3339),
+		"bound_shop": k.BoundShop,
 	})
 }

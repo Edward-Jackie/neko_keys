@@ -11,8 +11,10 @@ import (
 func Setup(r *gin.Engine, plugin *handlers.PluginHandler, admin *handlers.AdminHandler, jwtSecret string) {
 	r.Use(middleware.CORS())
 
-	// Public plugin endpoints — no authentication.
+	// Public plugin endpoints — no authentication. Rate-limited per client IP
+	// (shared bucket across activate + validate): ~20 req/min, burst 5.
 	v1 := r.Group("/api/v1")
+	v1.Use(middleware.RateLimit(20, 5))
 	{
 		v1.POST("/activate", plugin.Activate)
 		v1.POST("/validate", plugin.Validate)
